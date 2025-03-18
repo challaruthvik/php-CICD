@@ -4,15 +4,15 @@
 return [
     'database' => [
         'host' => 'localhost',
-        'dbname' => 'monitoring_system',
+        'dbname' => 'sephp_monitoring', // Changed from monitoring_system
         'username' => 'root',
         'password' => '',
         'charset' => 'utf8mb4'
     ],
     'websocket' => [
-        'host' => '0.0.0.0',
-        'port' => 8080,
-        'allowed_origins' => ['http://localhost']
+        'host' => '127.0.0.1',  // Changed from 0.0.0.0 to be more specific
+        'port' => 8081,  // Changed from 8080 to 8081
+        'allowed_origins' => ['http://localhost', 'http://localhost:80', 'http://127.0.0.1']
     ],
     'aws' => [
         'key' => getenv('AWS_ACCESS_KEY_ID'),

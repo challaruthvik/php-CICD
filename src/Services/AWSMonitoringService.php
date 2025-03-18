@@ -106,11 +106,11 @@ class AWSMonitoringService {
     }
 
     private function getMemoryUtilization($instanceId) {
-        // Note: Memory metrics require CloudWatch agent installation on EC2
         try {
+            // For memory metrics, we need to use AWS/EC2 metrics
             $result = $this->cloudWatch->getMetricStatistics([
-                'Namespace' => 'CWAgent',
-                'MetricName' => 'mem_used_percent',
+                'Namespace' => 'AWS/EC2',
+                'MetricName' => 'MemoryUtilization',
                 'Dimensions' => [
                     ['Name' => 'InstanceId', 'Value' => $instanceId]
                 ],
@@ -121,6 +121,23 @@ class AWSMonitoringService {
             ]);
 
             $datapoints = $result->get('Datapoints');
+            
+            // If standard EC2 memory metrics aren't available, try CloudWatch agent metrics
+            if (empty($datapoints)) {
+                $result = $this->cloudWatch->getMetricStatistics([
+                    'Namespace' => 'CWAgent',
+                    'MetricName' => 'mem_used_percent',
+                    'Dimensions' => [
+                        ['Name' => 'InstanceId', 'Value' => $instanceId]
+                    ],
+                    'StartTime' => strtotime('-5 minutes'),
+                    'EndTime' => time(),
+                    'Period' => 300,
+                    'Statistics' => ['Average']
+                ]);
+                $datapoints = $result->get('Datapoints');
+            }
+
             return !empty($datapoints) ? end($datapoints)['Average'] : 0;
         } catch (\Exception $e) {
             error_log("Error getting memory utilization: " . $e->getMessage());
@@ -130,6 +147,7 @@ class AWSMonitoringService {
 
     private function getNetworkUtilization($instanceId) {
         try {
+            // Get both NetworkIn and NetworkOut metrics
             $networkIn = $this->cloudWatch->getMetricStatistics([
                 'Namespace' => 'AWS/EC2',
                 'MetricName' => 'NetworkIn',
@@ -139,7 +157,7 @@ class AWSMonitoringService {
                 'StartTime' => strtotime('-5 minutes'),
                 'EndTime' => time(),
                 'Period' => 300,
-                'Statistics' => ['Average']
+                'Statistics' => ['Average', 'Maximum']
             ]);
 
             $networkOut = $this->cloudWatch->getMetricStatistics([
@@ -151,19 +169,22 @@ class AWSMonitoringService {
                 'StartTime' => strtotime('-5 minutes'),
                 'EndTime' => time(),
                 'Period' => 300,
-                'Statistics' => ['Average']
+                'Statistics' => ['Average', 'Maximum']
             ]);
 
             $inDatapoints = $networkIn->get('Datapoints');
             $outDatapoints = $networkOut->get('Datapoints');
 
+            // Convert bytes to megabytes for better readability
             return [
-                'in' => !empty($inDatapoints) ? end($inDatapoints)['Average'] : 0,
-                'out' => !empty($outDatapoints) ? end($outDatapoints)['Average'] : 0
+                'in' => !empty($inDatapoints) ? end($inDatapoints)['Average'] / (1024 * 1024) : 0,
+                'out' => !empty($outDatapoints) ? end($outDatapoints)['Average'] / (1024 * 1024) : 0,
+                'max_in' => !empty($inDatapoints) ? end($inDatapoints)['Maximum'] / (1024 * 1024) : 0,
+                'max_out' => !empty($outDatapoints) ? end($outDatapoints)['Maximum'] / (1024 * 1024) : 0
             ];
         } catch (\Exception $e) {
             error_log("Error getting network utilization: " . $e->getMessage());
-            return ['in' => 0, 'out' => 0];
+            return ['in' => 0, 'out' => 0, 'max_in' => 0, 'max_out' => 0];
         }
     }
 
@@ -202,35 +223,60 @@ class AWSMonitoringService {
 
     private function storeAwsMetrics($instanceId, $metrics) {
         try {
-            // Store in database
-            $stmt = $this->db->prepare("
-                INSERT INTO aws_metrics (
-                    instance_id,
-                    cpu_utilization,
-                    memory_utilization,
-                    network_in,
-                    network_out,
-                    instance_status,
-                    created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, NOW())
-            ");
-
+            $query = "INSERT INTO aws_metrics 
+                    (instance_id, cpu_utilization, memory_utilization, network_in, network_out, instance_status) 
+                    VALUES (:instance_id, :cpu, :memory, :network_in, :network_out, :status)";
+            
+            $stmt = $this->db->prepare($query);
             $stmt->execute([
-                $instanceId,
-                $metrics['cpu'],
-                $metrics['memory'],
-                $metrics['network']['in'],
-                $metrics['network']['out'],
-                $metrics['status']
+                ':instance_id' => $instanceId,
+                ':cpu' => $metrics['cpu'],
+                ':memory' => $metrics['memory'],
+                ':network_in' => $metrics['network']['in'],
+                ':network_out' => $metrics['network']['out'],
+                ':status' => $metrics['status']
             ]);
-
-            // Broadcast to WebSocket clients
+            
+            error_log("Stored AWS metrics for instance {$instanceId}");
+            
+            // Broadcast metrics via WebSocket if server is available
             if ($this->websocketServer) {
-                $this->broadcastAwsMetrics($instanceId, $metrics);
+                $message = json_encode([
+                    'type' => 'aws_metrics_update',
+                    'instanceId' => $instanceId,
+                    'metrics' => $metrics,
+                    'timestamp' => date('Y-m-d H:i:s')
+                ]);
+                $this->websocketServer->broadcast($message);
             }
-        } catch (\Exception $e) {
+        } catch (\PDOException $e) {
             error_log("Error storing AWS metrics: " . $e->getMessage());
-            throw $e;
+        }
+    }
+
+    public function getStoredMetrics($instanceId = null, $limit = 100) {
+        try {
+            $query = "SELECT * FROM aws_metrics";
+            $params = [];
+            
+            if ($instanceId) {
+                $query .= " WHERE instance_id = :instance_id";
+                $params[':instance_id'] = $instanceId;
+            }
+            
+            $query .= " ORDER BY created_at DESC LIMIT :limit";
+            $params[':limit'] = $limit;
+            
+            $stmt = $this->db->prepare($query);
+            foreach ($params as $key => &$value) {
+                $stmt->bindParam($key, $value);
+            }
+            $stmt->execute();
+            
+            return $stmt->fetchAll(\PDO::FETCH_ASSOC);
+        } catch (\PDOException $e) {
+            error_log("Error retrieving AWS metrics: " . $e->getMessage());
+            return [];
         }
     }
 
@@ -244,6 +290,34 @@ class AWSMonitoringService {
         
         if (method_exists($this->websocketServer, 'broadcast')) {
             $this->websocketServer->broadcast($data);
+        }
+    }
+
+    public function getMetricsHistory(string $period = 'hourly', ?string $instanceId = null): array {
+        try {
+            $sql = match($period) {
+                'hourly' => "SELECT * FROM aws_metrics WHERE created_at >= DATE_SUB(NOW(), INTERVAL 1 HOUR)",
+                'daily' => "SELECT * FROM aws_metrics WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)",
+                'weekly' => "SELECT * FROM aws_metrics WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)",
+                default => throw new \InvalidArgumentException("Invalid period: {$period}")
+            };
+            
+            if ($instanceId) {
+                $sql .= " AND instance_id = :instance_id";
+            }
+            
+            $sql .= " ORDER BY created_at";
+            
+            $stmt = $this->db->prepare($sql);
+            if ($instanceId) {
+                $stmt->bindParam(':instance_id', $instanceId);
+            }
+            $stmt->execute();
+            
+            return $stmt->fetchAll(\PDO::FETCH_ASSOC);
+        } catch (\Exception $e) {
+            error_log("Error retrieving metrics history: " . $e->getMessage());
+            return [];
         }
     }
 }

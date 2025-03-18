@@ -51,25 +51,13 @@ try {
     // Create deployments table
     $db->exec("CREATE TABLE IF NOT EXISTS deployments (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        environment VARCHAR(50) NOT NULL,
+        repository VARCHAR(255) NOT NULL,
+        environment VARCHAR(100) NOT NULL,
         status VARCHAR(50) NOT NULL,
-        message TEXT,
-        github_event_id INT,
+        commit_sha VARCHAR(40) NOT NULL,
+        description TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (github_event_id) REFERENCES github_events(id) ON DELETE SET NULL
-    )");
-
-    // Create aws_metrics table
-    $db->exec("CREATE TABLE IF NOT EXISTS aws_metrics (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        instance_id VARCHAR(255) NOT NULL,
-        cpu_utilization FLOAT,
-        memory_utilization FLOAT,
-        network_in FLOAT,
-        network_out FLOAT,
-        instance_status VARCHAR(50),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_instance_time (instance_id, created_at)
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     )");
 
     echo "Database tables created successfully\n";

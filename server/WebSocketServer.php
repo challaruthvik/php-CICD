@@ -74,6 +74,17 @@ class WebSocketServer implements MessageComponentInterface {
                 case 'get_aws_metrics':
                     $this->checkAndUpdateAwsMetrics();
                     break;
+                case 'get_aws_metrics_history':
+                    $period = $data['period'] ?? 'hourly';
+                    $instanceId = $data['instanceId'] ?? null;
+                    $history = $this->awsMonitoringService->getMetricsHistory($period, $instanceId);
+                    $from->send(json_encode([
+                        'type' => 'aws_metrics_history',
+                        'period' => $period,
+                        'instanceId' => $instanceId,
+                        'history' => $history
+                    ]));
+                    break;
                 default:
                     // Broadcast message to all other clients
                     foreach ($this->clients as $client) {
