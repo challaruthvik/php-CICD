@@ -4,9 +4,10 @@
 return [
     'database' => [
         'host' => 'localhost',
-        'dbname' => 'sephp_monitoring', // Changed from monitoring_system
+        'port' => $_ENV['DB_PORT'] ?? 3308,
+        'dbname' => 'sephp_monitoring', 
         'username' => 'root',
-        'password' => '',
+        'password' => $_ENV['DB_PASS'] ?? 'admin', // Setting 'admin' as the default password
         'charset' => 'utf8mb4'
     ],
     'websocket' => [

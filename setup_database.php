@@ -1,151 +1,145 @@
 <?php
+/**
+ * Database Setup Script
+ * Creates the database and imports the schema for SePHP Monitoring System
+ */
 
 require_once __DIR__ . '/vendor/autoload.php';
 
-// Load environment variables
 use Dotenv\Dotenv;
 
+// Load environment variables
 $dotenv = Dotenv::createImmutable(__DIR__);
 $dotenv->safeLoad();
 
-echo "Starting database setup...\n";
+// Database connection parameters
+$host = $_ENV['DB_HOST'];
+$port = $_ENV['DB_PORT'] ?? 3306;
+$dbname = $_ENV['DB_NAME'];
+$username = $_ENV['DB_USER'];
+$password = $_ENV['DB_PASS'];
+
+echo "Setting up database for SePHP Monitoring System\n";
+echo "=============================================\n";
+echo "Host: {$host}:{$port}\n";
+echo "Database: {$dbname}\n";
+echo "Username: {$username}\n\n";
 
 try {
-    // Create PDO connection to MySQL without selecting a database
-    $pdo = new PDO(
-        'mysql:host=localhost',
-        'root',
-        '',
-        array(PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION)
-    );
+    // Connect without specifying database (to create it)
+    echo "Connecting to MySQL server...\n";
+    $conn = new mysqli($host, $username, $password, '', $port);
     
-    // Create the database if it doesn't exist
-    $pdo->exec("CREATE DATABASE IF NOT EXISTS sephp_monitoring");
-    echo "Database 'sephp_monitoring' created or already exists.\n";
-    
-    // Connect to the sephp_monitoring database
-    $pdo = new PDO(
-        'mysql:host=localhost;dbname=sephp_monitoring',
-        'root',
-        '',
-        array(PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION)
-    );
-    
-    // Drop existing tables in the correct order (respecting foreign keys)
-    echo "Cleaning up any existing tables...\n";
-    $pdo->exec("SET FOREIGN_KEY_CHECKS = 0");
-    
-    $tables = [
-        'metrics',
-        'aws_metrics',
-        'github_events',
-        'deployments',
-        'connections',
-        'services'
-    ];
-    
-    foreach ($tables as $table) {
-        $pdo->exec("DROP TABLE IF EXISTS $table");
-        echo "Dropped table '$table' if it existed.\n";
+    if ($conn->connect_error) {
+        throw new Exception("Connection failed: " . $conn->connect_error);
     }
     
-    $pdo->exec("SET FOREIGN_KEY_CHECKS = 1");
+    echo "Connected to MySQL server successfully!\n";
     
-    // Now run the migrations to create all tables
+    // Create database if it doesn't exist
+    echo "Creating database '{$dbname}' if it doesn't exist...\n";
+    $sql = "CREATE DATABASE IF NOT EXISTS `{$dbname}`";
+    
+    if ($conn->query($sql) === TRUE) {
+        echo "Database created or already exists.\n";
+    } else {
+        throw new Exception("Error creating database: " . $conn->error);
+    }
+    
+    // Switch to the new database
+    echo "Switching to database '{$dbname}'...\n";
+    $conn->select_db($dbname);
+    
+    // Create tables
     echo "Creating tables...\n";
     
-    // Create services table
-    $pdo->exec("CREATE TABLE IF NOT EXISTS services (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        name VARCHAR(255) NOT NULL,
-        status VARCHAR(50) NOT NULL DEFAULT 'unknown',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-    )");
-    echo "Created 'services' table.\n";
-
-    // Create metrics table
-    $pdo->exec("CREATE TABLE IF NOT EXISTS metrics (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        service_id INT,
-        metric_name VARCHAR(255) NOT NULL,
-        metric_value TEXT NOT NULL,
-        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE CASCADE
-    )");
-    echo "Created 'metrics' table.\n";
-
-    // Create connections table
-    $pdo->exec("CREATE TABLE IF NOT EXISTS connections (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        connection_id VARCHAR(255) NOT NULL UNIQUE,
-        connected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        last_ping TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )");
-    echo "Created 'connections' table.\n";
-
-    // Create github_events table
-    $pdo->exec("CREATE TABLE IF NOT EXISTS github_events (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        event_type VARCHAR(50) NOT NULL,
-        repository VARCHAR(255) NOT NULL,
-        branch VARCHAR(255) NOT NULL,
-        author VARCHAR(255) NOT NULL,
-        commit_count INT DEFAULT 0,
-        details JSON,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )");
-    echo "Created 'github_events' table.\n";
-
+    // Create GitHub events table
+    $sql = "CREATE TABLE IF NOT EXISTS `github_events` (
+        `id` INT AUTO_INCREMENT PRIMARY KEY,
+        `event_id` VARCHAR(255) NOT NULL,
+        `event_type` VARCHAR(50) NOT NULL,
+        `repository` VARCHAR(255) NOT NULL,
+        `sender` VARCHAR(255) NOT NULL,
+        `payload` TEXT NOT NULL,
+        `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )";
+    
+    if ($conn->query($sql) === TRUE) {
+        echo "- Table 'github_events' created or already exists.\n";
+    } else {
+        throw new Exception("Error creating table 'github_events': " . $conn->error);
+    }
+    
     // Create deployments table
-    $pdo->exec("CREATE TABLE IF NOT EXISTS deployments (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        repository VARCHAR(255) NOT NULL,
-        environment VARCHAR(100) NOT NULL,
-        status VARCHAR(50) NOT NULL,
-        commit_sha VARCHAR(40) NOT NULL,
-        description TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-    )");
-    echo "Created 'deployments' table.\n";
-
-    // Create aws_metrics table
-    $pdo->exec("CREATE TABLE IF NOT EXISTS aws_metrics (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        instance_id VARCHAR(255) NOT NULL,
-        cpu_utilization FLOAT,
-        memory_utilization FLOAT,
-        network_in FLOAT,
-        network_out FLOAT,
-        instance_status VARCHAR(50),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_instance_time (instance_id, created_at)
-    )");
-    echo "Created 'aws_metrics' table.\n";
-
-    // Create aws_metrics table for storing historical data
-    $pdo->exec("CREATE TABLE IF NOT EXISTS aws_metrics (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        instance_id VARCHAR(255) NOT NULL,
-        cpu_utilization FLOAT,
-        memory_utilization FLOAT,
-        network_in FLOAT,
-        network_out FLOAT,
-        instance_status VARCHAR(50),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )");
-
-    // Insert some sample data into deployments table
-    $pdo->exec("INSERT INTO deployments (repository, environment, status, commit_sha, description) VALUES 
-        ('main-app', 'production', 'success', '8f34dc21a3b9a0b4d669218d0f3fe5f0d2ef4c4a', 'Sprint 45 release'),
-        ('api-service', 'staging', 'running', 'a7d3fcb91a3cb89d214fe52b8c8af3f9a234bd98', 'New API endpoints'),
-        ('web-client', 'development', 'failed', 'c6d91fe528b4a1deb9742990f2c5192bc9a84b11', 'Frontend update')
-    ");
-    echo "Added sample deployment data.\n";
-
-    echo "Database setup completed successfully!\n";
+    $sql = "CREATE TABLE IF NOT EXISTS `deployments` (
+        `id` INT AUTO_INCREMENT PRIMARY KEY,
+        `repository` VARCHAR(255) NOT NULL,
+        `environment` VARCHAR(50) NOT NULL,
+        `target` VARCHAR(255) NOT NULL,
+        `status` VARCHAR(50) NOT NULL,
+        `log` TEXT,
+        `deployment_config` TEXT,
+        `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )";
+    
+    if ($conn->query($sql) === TRUE) {
+        echo "- Table 'deployments' created or already exists.\n";
+    } else {
+        throw new Exception("Error creating table 'deployments': " . $conn->error);
+    }
+    
+    echo "Adding sample data...\n";
+    
+    // Insert sample GitHub event
+    $sampleEventId = "sample-" . uniqid();
+    $samplePayload = json_encode([
+        'action' => 'opened',
+        'issue' => [
+            'number' => 1,
+            'title' => 'Sample Issue'
+        ]
+    ]);
+    
+    $sql = "INSERT INTO `github_events` 
+            (`event_id`, `event_type`, `repository`, `sender`, `payload`) 
+            VALUES 
+            ('{$sampleEventId}', 'issues', 'challaruthvik/testing', 'challaruthvik', '{$samplePayload}')";
+    
+    if ($conn->query($sql) === TRUE) {
+        echo "- Added sample GitHub event.\n";
+    } else {
+        echo "- Note: " . $conn->error . "\n";
+    }
+    
+    // Insert sample deployment with correct schema
+    $deploymentConfig = json_encode([
+        'branch' => 'main',
+        'commit_hash' => '1a2b3c4d5e6f7g8h9i0j'
+    ]);
+    
+    $sql = "INSERT INTO `deployments` 
+            (`repository`, `environment`, `target`, `status`, `log`, `deployment_config`) 
+            VALUES 
+            ('challaruthvik/testing', 'production', 'rtest.ruthvikchalla.com', 'success', 'Deployment completed successfully.', '{$deploymentConfig}')";
+    
+    if ($conn->query($sql) === TRUE) {
+        echo "- Added sample deployment record.\n";
+    } else {
+        echo "- Note: " . $conn->error . "\n";
+    }
+    
+    // Close connection
+    $conn->close();
+    
+    echo "\nDatabase setup completed successfully!\n";
+    echo "You can now access the database at: {$host}:{$port}/{$dbname}\n";
+    
 } catch (Exception $e) {
-    echo "Error setting up database: " . $e->getMessage() . "\n";
+    echo "ERROR: " . $e->getMessage() . "\n";
+    
+    if (isset($conn)) {
+        $conn->close();
+    }
+    
     exit(1);
 }

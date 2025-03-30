@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Database;
+namespace Sephp\Database;
 
 class DatabaseConnection {
     private static $instance = null;
@@ -10,8 +10,19 @@ class DatabaseConnection {
         $config = require __DIR__ . '/../../config/database.php';
         
         try {
+            // Include port in connection string if specified
+            $dsn = "mysql:host={$config['database']['host']}";
+            
+            // Add port if it exists
+            if (isset($config['database']['port'])) {
+                $dsn .= ";port={$config['database']['port']}";
+            }
+            
+            // Complete the connection string
+            $dsn .= ";dbname={$config['database']['dbname']};charset={$config['database']['charset']}";
+            
             $this->connection = new \PDO(
-                "mysql:host={$config['database']['host']};dbname={$config['database']['dbname']};charset={$config['database']['charset']}",
+                $dsn,
                 $config['database']['username'],
                 $config['database']['password'],
                 [

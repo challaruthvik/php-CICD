@@ -12,13 +12,26 @@ class GitHubService {
     public function __construct($websocketServer = null) {
         $this->db = DatabaseConnection::getInstance()->getConnection();
         $this->websocketServer = $websocketServer;
-        $this->webhookSecret = getenv('GITHUB_WEBHOOK_SECRET') ?: 'sephp_webhook_secret_2024';
+        
+        // Try to get the secret from environment variable first
+        $this->webhookSecret = getenv('GITHUB_WEBHOOK_SECRET');
+        
+        // If not found, try to load from a config file
+        if (!$this->webhookSecret) {
+            $configFile = __DIR__ . '/../../config/github.php';
+            if (file_exists($configFile)) {
+                $config = include $configFile;
+                $this->webhookSecret = $config['webhook_secret'] ?? 'sephp_webhook_secret_2024';
+            } else {
+                $this->webhookSecret = 'sephp_webhook_secret_2024';
+            }
+        }
     }
 
     public function handleWebhook($payload, $signature, $bypassVerification = false) {
         // Verify signature unless bypassed for testing
         if (!$bypassVerification && !$this->verifySignature($payload, $signature)) {
-            throw new \Exception('Invalid webhook signature');
+            throw new \Exception('Invalid webhook signature. Please check your webhook secret configuration.');
         }
 
         $data = json_decode($payload, true);
@@ -28,19 +41,24 @@ class GitHubService {
 
         $eventType = $_SERVER['HTTP_X_GITHUB_EVENT'] ?? 'unknown';
 
-        switch ($eventType) {
-            case 'push':
-                return $this->handlePushEvent($data);
-            case 'pull_request':
-                return $this->handlePullRequestEvent($data);
-            case 'deployment':
-                return $this->handleDeploymentEvent($data);
-            case 'deployment_status':
-                return $this->handleDeploymentStatusEvent($data);
-            case 'ping':
-                return $this->handlePingEvent($data);
-            default:
-                return ['status' => 'ignored', 'message' => "Event type '$eventType' not handled"];
+        try {
+            switch ($eventType) {
+                case 'push':
+                    return $this->handlePushEvent($data);
+                case 'pull_request':
+                    return $this->handlePullRequestEvent($data);
+                case 'deployment':
+                    return $this->handleDeploymentEvent($data);
+                case 'deployment_status':
+                    return $this->handleDeploymentStatusEvent($data);
+                case 'ping':
+                    return $this->handlePingEvent($data);
+                default:
+                    return ['status' => 'ignored', 'message' => "Event type '$eventType' not handled"];
+            }
+        } catch (\Exception $e) {
+            error_log("Error processing GitHub webhook: " . $e->getMessage());
+            throw $e;
         }
     }
 
@@ -241,7 +259,7 @@ class GitHubService {
     }
 
     private function verifySignature($payload, $signature) {
-        if (empty($signature)) {
+        if (empty($signature) || empty($this->webhookSecret)) {
             return false;
         }
 

@@ -221,36 +221,48 @@ class AWSMonitoringService {
         }
     }
 
-    private function storeAwsMetrics($instanceId, $metrics) {
+    /**
+     * Store AWS metrics in the database
+     * 
+     * @param string $instanceId The EC2 instance ID
+     * @param array $metrics The collected metrics
+     * @return bool Success/failure
+     */
+    private function storeAwsMetrics($instanceId, array $metrics)
+    {
         try {
-            $query = "INSERT INTO aws_metrics 
-                    (instance_id, cpu_utilization, memory_utilization, network_in, network_out, instance_status) 
-                    VALUES (:instance_id, :cpu, :memory, :network_in, :network_out, :status)";
+            $sql = "INSERT INTO aws_metrics 
+                   (instance_id, cpu_utilization, memory_utilization, 
+                    network_in, network_out, status, disk_utilization, 
+                    collected_at) 
+                   VALUES 
+                   (:instance_id, :cpu, :memory, :network_in, :network_out, 
+                    :status, :disk_utilization, NOW())";
             
-            $stmt = $this->db->prepare($query);
-            $stmt->execute([
-                ':instance_id' => $instanceId,
-                ':cpu' => $metrics['cpu'],
-                ':memory' => $metrics['memory'],
-                ':network_in' => $metrics['network']['in'],
-                ':network_out' => $metrics['network']['out'],
-                ':status' => $metrics['status']
-            ]);
+            $stmt = $this->db->prepare($sql);
+            $stmt->bindParam(':instance_id', $instanceId);
+            $stmt->bindParam(':cpu', $metrics['cpu']);
+            $stmt->bindParam(':memory', $metrics['memory']);
+            $stmt->bindParam(':network_in', $metrics['network']['in']);
+            $stmt->bindParam(':network_out', $metrics['network']['out']);
+            $stmt->bindParam(':status', $metrics['status']);
             
-            error_log("Stored AWS metrics for instance {$instanceId}");
+            // Default disk utilization to 0 as it's not currently being collected
+            $diskUtilization = 0;
+            $stmt->bindParam(':disk_utilization', $diskUtilization);
             
-            // Broadcast metrics via WebSocket if server is available
-            if ($this->websocketServer) {
-                $message = json_encode([
-                    'type' => 'aws_metrics_update',
-                    'instanceId' => $instanceId,
-                    'metrics' => $metrics,
-                    'timestamp' => date('Y-m-d H:i:s')
-                ]);
-                $this->websocketServer->broadcast($message);
+            $result = $stmt->execute();
+            
+            if ($result) {
+                error_log("AWS metrics stored successfully for instance: " . $instanceId);
+            } else {
+                error_log("Failed to store AWS metrics for instance: " . $instanceId);
             }
-        } catch (\PDOException $e) {
+            
+            return $result;
+        } catch (\Exception $e) {
             error_log("Error storing AWS metrics: " . $e->getMessage());
+            return false;
         }
     }
 
@@ -264,7 +276,7 @@ class AWSMonitoringService {
                 $params[':instance_id'] = $instanceId;
             }
             
-            $query .= " ORDER BY created_at DESC LIMIT :limit";
+            $query .= " ORDER BY collected_at DESC LIMIT :limit";
             $params[':limit'] = $limit;
             
             $stmt = $this->db->prepare($query);
@@ -296,9 +308,9 @@ class AWSMonitoringService {
     public function getMetricsHistory(string $period = 'hourly', ?string $instanceId = null): array {
         try {
             $sql = match($period) {
-                'hourly' => "SELECT * FROM aws_metrics WHERE created_at >= DATE_SUB(NOW(), INTERVAL 1 HOUR)",
-                'daily' => "SELECT * FROM aws_metrics WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)",
-                'weekly' => "SELECT * FROM aws_metrics WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)",
+                'hourly' => "SELECT * FROM aws_metrics WHERE collected_at >= DATE_SUB(NOW(), INTERVAL 1 HOUR)",
+                'daily' => "SELECT * FROM aws_metrics WHERE collected_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)",
+                'weekly' => "SELECT * FROM aws_metrics WHERE collected_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)",
                 default => throw new \InvalidArgumentException("Invalid period: {$period}")
             };
             
@@ -306,7 +318,7 @@ class AWSMonitoringService {
                 $sql .= " AND instance_id = :instance_id";
             }
             
-            $sql .= " ORDER BY created_at";
+            $sql .= " ORDER BY collected_at";
             
             $stmt = $this->db->prepare($sql);
             if ($instanceId) {

@@ -1,66 +1,85 @@
 <?php
 
-require_once __DIR__ . '/../../vendor/autoload.php';
+namespace Sephp\Database;
 
-// Load environment variables
-$dotenv = Dotenv\Dotenv::createImmutable(__DIR__ . '/../../');
-$dotenv->safeLoad();
+/**
+ * Database migrations for application tables
+ */
+class Migrations {
 
-try {
-    $db = \App\Database\DatabaseConnection::getInstance()->getConnection();
+    private $pdo;
+
+    public function __construct($pdo) {
+        $this->pdo = $pdo;
+    }
+
+    /**
+     * Run all migrations
+     */
+    public function runMigrations() {
+        $this->createGithubEventsTable();
+        $this->createDeploymentsTable();
+        $this->createAWSMetricsTable();
+        return true;
+    }
+
+    /**
+     * Create github_events table if it doesn't exist
+     */
+    private function createGithubEventsTable() {
+        $sql = "CREATE TABLE IF NOT EXISTS github_events (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            event_type VARCHAR(50) NOT NULL,
+            payload TEXT NOT NULL,
+            repository VARCHAR(255) NOT NULL,
+            sender VARCHAR(255) NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )";
+        
+        $this->pdo->exec($sql);
+    }
+
+    /**
+     * Create deployments table if it doesn't exist
+     */
+    private function createDeploymentsTable() {
+        $sql = "CREATE TABLE IF NOT EXISTS deployments (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            repository VARCHAR(255) NOT NULL,
+            branch VARCHAR(100) DEFAULT 'main',
+            commit_hash VARCHAR(40),
+            environment VARCHAR(50) NOT NULL,
+            target VARCHAR(50) NOT NULL,
+            status VARCHAR(20) DEFAULT 'pending',
+            log TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            completed_at TIMESTAMP NULL
+        )";
+        
+        $this->pdo->exec($sql);
+    }
     
-    // Create services table
-    $db->exec("CREATE TABLE IF NOT EXISTS services (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        name VARCHAR(255) NOT NULL,
-        status VARCHAR(50) NOT NULL DEFAULT 'unknown',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-    )");
-
-    // Create metrics table
-    $db->exec("CREATE TABLE IF NOT EXISTS metrics (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        service_id INT,
-        metric_name VARCHAR(255) NOT NULL,
-        metric_value TEXT NOT NULL,
-        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE CASCADE
-    )");
-
-    // Create connections table
-    $db->exec("CREATE TABLE IF NOT EXISTS connections (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        connection_id VARCHAR(255) NOT NULL UNIQUE,
-        connected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        last_ping TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )");
-
-    // Create github_events table
-    $db->exec("CREATE TABLE IF NOT EXISTS github_events (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        event_type VARCHAR(50) NOT NULL,
-        repository VARCHAR(255) NOT NULL,
-        branch VARCHAR(255) NOT NULL,
-        author VARCHAR(255) NOT NULL,
-        commit_count INT DEFAULT 0,
-        details JSON,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )");
-
-    // Create deployments table
-    $db->exec("CREATE TABLE IF NOT EXISTS deployments (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        repository VARCHAR(255) NOT NULL,
-        environment VARCHAR(100) NOT NULL,
-        status VARCHAR(50) NOT NULL,
-        commit_sha VARCHAR(40) NOT NULL,
-        description TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-    )");
-
-    echo "Database tables created successfully\n";
-} catch (\PDOException $e) {
-    die("Database setup failed: " . $e->getMessage());
+    /**
+     * Create aws_metrics table if it doesn't exist
+     */
+    private function createAWSMetricsTable() {
+        $sql = "CREATE TABLE IF NOT EXISTS aws_metrics (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            instance_id VARCHAR(50) NOT NULL,
+            cpu_utilization FLOAT,
+            memory_utilization FLOAT,
+            disk_utilization FLOAT,
+            network_in FLOAT,
+            network_out FLOAT,
+            status VARCHAR(20),
+            reservation_id VARCHAR(100),
+            reservation_start TIMESTAMP NULL,
+            reservation_end TIMESTAMP NULL,
+            collected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX (instance_id),
+            INDEX (collected_at)
+        )";
+        
+        $this->pdo->exec($sql);
+    }
 }
